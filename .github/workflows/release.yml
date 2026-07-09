@@ -88,7 +88,6 @@ jobs:
           else
             tar -czf "${{ matrix.package }}" "${{ matrix.artifact }}"
           fi
-          sha256sum "${{ matrix.package }}" > "${{ matrix.package }}.sha256"
 
       - name: Upload packaged binary
         uses: actions/upload-artifact@v4
@@ -96,7 +95,6 @@ jobs:
           name: ${{ matrix.artifact }}
           path: |
             dist/${{ matrix.package }}
-            dist/${{ matrix.package }}.sha256
 
   publish:
     name: Publish release assets

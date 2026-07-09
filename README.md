@@ -12,32 +12,10 @@ GitHub Actions 会为以下目标系统编译二进制产物：
 | Windows | x64 / amd64 | `campuslink-windows-amd64.zip` |
 | macOS | arm64 / Apple Silicon | `campuslink-darwin-arm64.tar.gz` |
 
-从 [GitHub Releases](https://github.com/CUG-CS-632/CampusLink/releases/latest) 下载对应系统的压缩包和 `.sha256` 校验文件。解压后得到：
+从 [GitHub Releases](https://github.com/CUG-CS-632/CampusLink/releases/latest) 下载对应系统的压缩包。解压后得到：
 
 - Windows: `campuslink.exe`
 - Linux/macOS: `campuslink`
-
-可选校验：
-
-Windows PowerShell:
-
-```powershell
-$expected = (Get-Content .\campuslink-windows-amd64.zip.sha256).Split()[0]
-$actual = (Get-FileHash .\campuslink-windows-amd64.zip -Algorithm SHA256).Hash.ToLower()
-$actual -eq $expected
-```
-
-Linux:
-
-```bash
-sha256sum -c campuslink-linux-amd64.tar.gz.sha256
-```
-
-macOS:
-
-```bash
-shasum -a 256 -c campuslink-darwin-arm64.tar.gz.sha256
-```
 
 推荐安装位置：
 
@@ -313,7 +291,6 @@ launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/io.github.campuslink.sru
 - `.github/workflows/build.yml` 用于普通 push、PR 和手动触发，交叉编译 Linux x64、Windows x64、macOS arm64，并上传 Actions artifacts。
 - `.github/workflows/release.yml` 只负责发版。推送 `v*` tag 会自动创建 GitHub Release，并上传三个系统的压缩包。
 - Release workflow 也支持手动触发，输入已有 tag 后会重新构建并补发对应 Release assets。
-- 每个 Release 压缩包会同时生成 `.sha256` 校验文件。
 
 ## 安全说明
 

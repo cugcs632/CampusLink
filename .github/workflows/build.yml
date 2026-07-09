@@ -76,10 +76,8 @@ jobs:
         run: |
           if [ "${{ matrix.goos }}" = "windows" ]; then
             zip -r "${{ matrix.artifact }}.zip" "${{ matrix.artifact }}"
-            sha256sum "${{ matrix.artifact }}.zip" > "${{ matrix.artifact }}.zip.sha256"
           else
             tar -czf "${{ matrix.artifact }}.tar.gz" "${{ matrix.artifact }}"
-            sha256sum "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.tar.gz.sha256"
           fi
 
       - name: Upload artifact
@@ -88,7 +86,5 @@ jobs:
           name: ${{ matrix.artifact }}
           path: |
             dist/${{ matrix.artifact }}.tar.gz
-            dist/${{ matrix.artifact }}.tar.gz.sha256
             dist/${{ matrix.artifact }}.zip
-            dist/${{ matrix.artifact }}.zip.sha256
           if-no-files-found: ignore
