@@ -308,15 +308,12 @@ launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/io.github.campuslink.sru
 
 ## GitHub CI
 
-CI 配置在 `.github/workflows/build.yml`：
-
 - `go test ./...` 验证认证算法和 JSONP 解析。
 - `go vet ./...` 做基础静态检查。
-- 交叉编译 Linux x64、Windows x64、macOS arm64。
-- push、PR、手动触发都会上传 Actions artifacts。
-- 推送 `v*` tag 会自动创建 GitHub Release，并上传三个系统的压缩包。
-- 手动创建 GitHub Release 时，也会把三个压缩包上传为 Release assets。
-- 每个压缩包会同时生成 `.sha256` 校验文件。
+- `.github/workflows/build.yml` 用于普通 push、PR 和手动触发，交叉编译 Linux x64、Windows x64、macOS arm64，并上传 Actions artifacts。
+- `.github/workflows/release.yml` 只负责发版。推送 `v*` tag 会自动创建 GitHub Release，并上传三个系统的压缩包。
+- Release workflow 也支持手动触发，输入已有 tag 后会重新构建并补发对应 Release assets。
+- 每个 Release 压缩包会同时生成 `.sha256` 校验文件。
 
 ## 安全说明
 
