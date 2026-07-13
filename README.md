@@ -12,7 +12,7 @@ GitHub Actions 会为以下目标系统编译二进制产物：
 | Windows | x64 / amd64 | `campuslink-windows-amd64.zip` |
 | macOS | arm64 / Apple Silicon | `campuslink-darwin-arm64.tar.gz` |
 
-从 [GitHub Releases](https://github.com/CUG-CS-632/CampusLink/releases/latest) 下载对应系统的压缩包。解压后得到：
+从 [GitHub Releases](https://github.com/cugcs632/CampusLink/releases/latest) 下载对应系统的压缩包。解压后得到：
 
 - Windows: `campuslink.exe`
 - Linux/macOS: `campuslink`

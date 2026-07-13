@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/CUG-CS-632/CampusLink/internal/srun"
+	"github.com/cugcs632/CampusLink/internal/srun"
 )
 
 const (
