@@ -232,6 +232,7 @@ func mockPortal(t *testing.T, portalResult string) *httptest.Server {
 
 func clearConfigEnv(t *testing.T) {
 	t.Helper()
+	t.Setenv("CAMPUSLINK_CONFIG_DIR", t.TempDir())
 	for _, key := range []string{
 		"CAMPUSLINK_USERNAME",
 		"CAMPUSLINK_PASSWORD",

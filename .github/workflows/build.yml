@@ -14,7 +14,11 @@ permissions:
 jobs:
   test:
     name: Test
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -53,6 +57,19 @@ jobs:
           - goos: darwin
             goarch: arm64
             artifact: campuslink-darwin-arm64
+            binary: campuslink
+
+          - goos: linux
+            goarch: arm64
+            artifact: campuslink-linux-arm64
+            binary: campuslink
+          - goos: windows
+            goarch: arm64
+            artifact: campuslink-windows-arm64
+            binary: campuslink.exe
+          - goos: darwin
+            goarch: amd64
+            artifact: campuslink-darwin-amd64
             binary: campuslink
 
     steps:

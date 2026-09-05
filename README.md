@@ -1,386 +1,196 @@
 # CampusLink
 
-CampusLink 是一个校园网自动登录工具。实现语言为 Go，产物是单文件二进制程序，不依赖脚本运行时、包管理器或虚拟环境。默认连接 `https://nap.cug.edu.cn`，通过系统 DNS 解析域名后连接。
-
-## 认证与连接
-
-程序通过账号认证 API 登录：自动获取客户端 IP 和 NAS ID，获取 CSRF token 与会话 Cookie，检查在线状态，再依次通过表单 POST 调用 `/api/account/check` 和 `/api/account/login`。已在线时直接成功返回；验证码或强制改密要求会提示前往浏览器处理。
-
-默认通过系统 DNS 解析 `nap.cug.edu.cn`，并使用 HTTPS 连接和校验证书。登录前检查解析结果：
-
-- 包含 `192.168.167.72`：正常继续。
-- 不包含该 IP：向标准错误输出实际解析结果、预期 IP 和排查建议，仍通过域名连接，不强制替换 IP。`--json` 的标准输出保持为 JSON。
-- DNS 查询失败或没有返回地址：报错退出，不回退到固定 IP。DNS 查询受 `--timeout` 限制。
-
-`192.168.167.72` 仅用于提醒，不是硬编码连接地址。默认域名不使用环境变量 HTTP 代理；VPN/TUN 等系统级代理仍可能影响 DNS 和连接。自定义 `--base-url` 不执行校园网域名的 IP 对比。
-
-## 凭据读取
-
-- 用户名：`CAMPUSLINK_USERNAME` 提供初始值，`-u` / `--username` 覆盖它。
-- 密码：`CAMPUSLINK_PASSWORD` 提供初始值，`-p` / `--password` 覆盖它。
-- 命令行参数重复时最后一个生效；空字符串也会覆盖环境变量。
-- `--password-stdin` 仅在上述解析后的密码为空时读取标准输入第一行，否则报冲突。读取时去掉行尾换行，保留其他空格。
-- 最终账号或密码为空会报错；不自动加载 `.env`、配置文件或钥匙串，也不弹出交互输入提示。
+CampusLink 是一个校园网自动认证工具，默认通过 `https://nap.cug.edu.cn` 连接。Windows、macOS、Linux 使用相同的命令完成配置、登录、自动连接和故障排查。程序由 Go 编译为单文件，不需要 Python、Node.js 或其他脚本运行时；系统后台任务使用各平台自带的管理工具。
 
 ## 下载和安装
 
-GitHub Actions 会为以下目标系统编译二进制产物：
+从 [GitHub Releases](https://github.com/cugcs632/CampusLink/releases/latest) 下载对应系统和架构的压缩包并解压：
 
-| 系统 | 架构 | Artifact |
+| 系统 | 架构 | 压缩包 |
 | --- | --- | --- |
-| Linux | x64 / amd64 | `campuslink-linux-amd64.tar.gz` |
-| Windows | x64 / amd64 | `campuslink-windows-amd64.zip` |
-| macOS | arm64 / Apple Silicon | `campuslink-darwin-arm64.tar.gz` |
+| Windows | x64 / ARM64 | `campuslink-windows-amd64.zip` / `campuslink-windows-arm64.zip` |
+| macOS | Apple Silicon / Intel | `campuslink-darwin-arm64.tar.gz` / `campuslink-darwin-amd64.tar.gz` |
+| Linux | x64 / ARM64 | `campuslink-linux-amd64.tar.gz` / `campuslink-linux-arm64.tar.gz` |
 
-从 [GitHub Releases](https://github.com/cugcs632/CampusLink/releases/latest) 下载对应系统的压缩包。解压后得到：
+上述产物由本仓库工作流构建；已发布版本的可用架构以其 Release assets 为准。
 
-- Windows: `campuslink.exe`
-- Linux/macOS: `campuslink`
+在解压目录打开终端，首次配置：
 
-推荐安装位置：
+Windows PowerShell：
 
-| 系统 | 推荐路径 |
+```powershell
+.\campuslink.exe setup
+```
+
+macOS / Linux：
+
+```bash
+./campuslink setup
+```
+
+向导会要求输入账号和密码（输入密码时不回显），连接网关验证，保存配置，然后询问是否启用自动连接。设备已经在线时，网关状态检查无法验证新输入密码是否正确；首次离线登录时才能完成该验证。
+
+启用自动连接时，程序会把自身复制到配置目录下的 `bin` 子目录，并显示安装后的完整路径。后台任务使用这份副本；解压目录随后可以移走。下文的 `campuslink` 可替换为该完整路径，也可将其所在目录加入 `PATH`。
+
+从源码编译：
+
+```bash
+go build -trimpath -ldflags="-s -w" -o campuslink ./cmd/campuslink
+```
+
+## 常用命令
+
+| 命令 | 用途 |
 | --- | --- |
-| Windows | `%LOCALAPPDATA%\CampusLink\campuslink.exe` |
-| Linux | `$HOME/.local/bin/campuslink` |
-| macOS | `$HOME/.local/bin/campuslink` |
+| `campuslink setup` | 配置或更新账号、密码，选择自动连接 |
+| `campuslink login` | 立即认证；不带子命令时也执行登录 |
+| `campuslink status` | 查询在线状态、后台任务状态、最近成功时间与暂停原因 |
+| `campuslink autostart enable` | 安装或更新后台任务和程序副本，并恢复自动重试 |
+| `campuslink autostart disable` | 移除后台任务，保留配置和凭据 |
+| `campuslink logs` | 查看最近运行记录 |
+| `campuslink doctor` | 检查配置、已保存凭据是否可读、后台任务、DNS 和 HTTPS 认证接口 |
+| `campuslink --version` | 查看版本及 commit |
 
-Windows PowerShell:
-
-```powershell
-$InstallDir = "$env:LOCALAPPDATA\CampusLink"
-New-Item -ItemType Directory -Force -Path $InstallDir
-Expand-Archive .\campuslink-windows-amd64.zip -DestinationPath . -Force
-Copy-Item .\campuslink-windows-amd64\campuslink.exe "$InstallDir\campuslink.exe" -Force
-```
-
-Linux:
+`status` 和 `doctor` 只查询认证接口，不提交密码；`doctor` 会尝试读取已保存凭据来检查其可用性，但不会输出密码。支持 `--json` 输出结构化结果：
 
 ```bash
-mkdir -p "$HOME/.local/bin"
-tar -xzf campuslink-linux-amd64.tar.gz
-install -m 0755 campuslink-linux-amd64/campuslink "$HOME/.local/bin/campuslink"
+campuslink status --json
+campuslink doctor --json
+campuslink login --json
 ```
 
-macOS:
+`login --json` 输出网关原始响应，可能包含账号和会话信息，请勿直接公开。普通登录成功输出 `login ok`；失败返回非零退出码。`status` 在确认设备离线时仍正常退出；网络查询失败返回非零。`doctor` 发现凭据或后台任务访问问题也返回非零。
+
+## 配置和凭据
+
+配置默认保存在当前用户的系统配置目录：
+
+| 系统 | 默认目录 |
+| --- | --- |
+| Windows | `%APPDATA%\CampusLink` |
+| macOS | `~/Library/Application Support/CampusLink` |
+| Linux | `$XDG_CONFIG_HOME/CampusLink`，未设置时为 `~/.config/CampusLink` |
+
+`config.json` 保存账号、网关、NAS ID、超时和密码存储方式，不包含密码。可在所有命令之前指定其他配置目录：
 
 ```bash
-mkdir -p "$HOME/.local/bin"
-tar -xzf campuslink-darwin-arm64.tar.gz
-install -m 0755 campuslink-darwin-arm64/campuslink "$HOME/.local/bin/campuslink"
+campuslink --config-dir "/path/to/CampusLink" setup
+campuslink --config-dir "/path/to/CampusLink" status
 ```
 
-如果 `campuslink` 命令无法直接找到，可以使用完整路径 `$HOME/.local/bin/campuslink`，或把 `$HOME/.local/bin` 加入 `PATH`。
+也可以设置 `CAMPUSLINK_CONFIG_DIR`。命令行目录优先于环境变量。每个系统用户使用一套自动连接任务；切换配置目录前先在原目录下执行 `autostart disable`。
 
-也可以从源码本地编译安装：
+### 密码存储
+
+`setup` 默认使用系统凭据服务：
+
+- Windows：Windows 凭据管理器。
+- macOS：登录钥匙串，系统可能要求授权访问。
+- Linux：Secret Service，需要可用的用户 D-Bus 会话及已解锁的凭据服务。
+
+凭据服务不可用时会报错，不会自动降级为明文。无桌面 Linux 或其他需要文件存储的场景，可明确选择：
 
 ```bash
-go build -trimpath -ldflags="-s -w" -o "$HOME/.local/bin/campuslink" ./cmd/campuslink
+campuslink setup --storage file
 ```
 
-## 快速使用
+这种方式把密码明文保存到配置目录中的独立 `password` 文件。Unix 目录权限为 `0700`，文件为 `0600`；Windows 配置目录使用限制为当前用户和 SYSTEM 的 ACL。系统管理员仍可能访问这些数据。
 
-先手动验证账号、密码和认证参数：
+切换为钥匙串存储成功后，程序会删除本配置目录的明文密码文件。`autostart disable` 保留凭据；若要彻底清除，停用后台任务后删除配置目录，并在系统凭据管理界面删除对应的 `io.github.campuslink.*` 项。
+
+### 临时覆盖与优先级
+
+手动 `login` 按以下顺序读取配置：
+
+1. 命令行参数。
+2. 非空 `CAMPUSLINK_*` 环境变量。
+3. 已保存配置及关联密码。
+4. 内置默认值（账号密码没有默认值）。
+
+同一命令行参数重复指定时最后一个生效；显式传入空字符串不会回退到已保存值。密码仅在账号和网关均匹配已保存配置时自动读取，避免把保存的密码发送给其他网关或用于其他账号。
+
+`--password-stdin` 单独处理：如果命令行和环境变量解析后的密码非空，则报冲突；否则读取标准输入第一行，并跳过保存的密码。去掉行尾换行，保留其他空格。
 
 ```bash
-"$HOME/.local/bin/campuslink" -u "学号" -p "密码"
+campuslink login -u "学号" --password-stdin
 ```
 
-Windows PowerShell:
+输入完密码后换行即可；在普通终端使用此模式时输入可能回显，交互配置应优先使用 `setup` 的隐藏输入。它也适合由密码管理器通过管道提供密码。
 
-```powershell
-& "$env:LOCALAPPDATA\CampusLink\campuslink.exe" -u "学号" -p "密码"
-```
+自动连接始终使用保存的配置和密码，不依赖启动任务时继承的账号密码环境变量。修改长期使用的账号或密码请重新运行 `setup`。
 
-成功时普通模式会输出：
+| 环境变量 | `login` 参数 | 默认值 |
+| --- | --- | --- |
+| `CAMPUSLINK_USERNAME` | `-u` / `--username` | 保存的账号 |
+| `CAMPUSLINK_PASSWORD` | `-p` / `--password` | 保存的密码 |
+| 无 | `--password-stdin` | 关闭 |
+| `CAMPUSLINK_BASE_URL` | `--base-url` | 保存的网关或 `https://nap.cug.edu.cn` |
+| `CAMPUSLINK_IP` | `--ip` | 保存的客户端 IP 或自动发现 |
+| `CAMPUSLINK_NAS_ID` | `--nas-id` | 保存的 NAS ID 或自动发现 |
+| `CAMPUSLINK_ISP` | `--isp` | 保存的运营商 ID 或不发送 |
+| `CAMPUSLINK_TIMEOUT` | `--timeout` | 保存的秒数或 `8`，范围 1–3600 |
 
-```text
-login ok
-```
+`setup` 使用其参数和已有配置，不从登录用的环境变量导入凭据。支持 `--username`、`--base-url`、`--ip`、`--nas-id`、`--isp`、`--timeout`、`--storage`、`--password-stdin` 和 `--no-autostart`。不自动读取 `.env`。
 
-需要查看网关原始响应时再加 `--json`：
+## 自动连接行为
 
-```bash
-"$HOME/.local/bin/campuslink" -u "学号" -p "密码" --json
-```
+自动连接默认面向已登录系统的当前用户，不要求把校园网密码或 Windows 登录密码写进任务定义。
 
-也可以使用环境变量，避免把密码写进命令历史：
+| 平台 | 后台机制 | 触发方式 |
+| --- | --- | --- |
+| Windows | 用户任务计划 `CampusLink` | 用户登录后约 10 秒、网络连接事件后约 10 秒、每 5 分钟补偿检查 |
+| macOS | 用户 LaunchAgent | 加载或用户登录时执行，每 5 分钟检查 |
+| Linux | systemd 用户 service + timer | 用户管理器启动后约 10 秒、每次执行结束后 5 分钟 |
 
-```bash
-export CAMPUSLINK_USERNAME="学号"
-export CAMPUSLINK_PASSWORD="密码"
-"$HOME/.local/bin/campuslink"
-```
+Windows 任务允许电池供电，不唤醒电脑，使用当前用户交互会话并忽略重叠触发。网络事件是否触发取决于系统日志，定时检查负责补偿。macOS 和 Linux 首期以定时补偿覆盖网络切换，不承诺切换后立即执行。
 
-还可以从标准输入读取密码，便于对接密码管理器或其他不会把密码放进进程参数的工具：
+Linux 启用前会检查 systemd 用户会话；不支持时明确报错，仍可手动运行。尚未登录系统就进行认证不属于默认安装模式。
 
-```bash
-read -rsp "Campus network password: " CAMPUSLINK_PASSWORD
-printf '%s\n' "$CAMPUSLINK_PASSWORD" | env -u CAMPUSLINK_PASSWORD "$HOME/.local/bin/campuslink" -u "学号" --password-stdin
-unset CAMPUSLINK_PASSWORD
-```
+所有登录任务使用同一配置目录中的系统文件锁，防止同时认证；进程退出时锁自动释放。已在线时直接成功，不再提交密码。网络错误在下一次调度时重试；网关明确拒绝认证（包含验证码、强制改密等）时暂停自动提交。解决问题后可手动成功登录，或运行 `autostart enable` 恢复。
 
-查看当前版本：
+运行记录保存为 `activity.log`，只记录概括状态和 DNS 提示，不记录密码或网关原始认证响应。达到 256 KiB 后保留一份轮转备份。`state.json` 记录最近尝试、成功时间和暂停原因。
 
-```bash
-"$HOME/.local/bin/campuslink" --version
-```
+更新程序后，使用新下载的程序运行 `autostart enable`，即可替换后台使用的程序副本和任务定义。该命令也会清除暂停状态。
 
-Release 和 GitHub Actions 构建会同时显示版本号与 commit，例如 `campuslink v1.2.3 (commit abcdef123456)`。本地源码构建会读取 Go 嵌入的 Git 信息；工作区存在未提交改动时，commit 后会附加 `-dirty`。
+## 认证与 DNS
 
-可配置项：
+程序通过 `/api/r/default` 发现客户端 IP、NAS ID 等参数，获取 CSRF token 和 Cookie，检查在线状态，然后用表单 POST 依次调用 `/api/account/check` 和 `/api/account/login`。
 
-| 环境变量 | 命令行参数 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `CAMPUSLINK_USERNAME` | `-u, --username` | 无 | 校园网账号 |
-| `CAMPUSLINK_PASSWORD` | `-p, --password` | 无 | 校园网密码 |
-| 无 | `--password-stdin` | 关闭 | 从标准输入读取密码，不能与其他密码来源同时使用 |
-| `CAMPUSLINK_IP` | `--ip` | 自动发现 | 自动发现失败时手动指定客户端 IP |
-| `CAMPUSLINK_BASE_URL` | `--base-url` | `https://nap.cug.edu.cn` | 网关基础 URL，支持 HTTP/HTTPS；默认通过域名连接 |
-| `CAMPUSLINK_NAS_ID` | `--nas-id` | 自动发现 | 接入设备 ID；自动发现失败时可手动指定 |
-| `CAMPUSLINK_ISP` | `--isp` | 不发送 | 可选运营商 ID；按网关要求指定 |
-| `CAMPUSLINK_TIMEOUT` | `--timeout` | `8` | HTTP 超时时间，单位秒，有效范围 1–3600；非法配置会直接报错 |
+默认通过系统 DNS 解析 `nap.cug.edu.cn`，使用 HTTPS 并校验证书：
 
-默认使用 HTTPS；也可以明确指定：
+- 解析结果包含 `192.168.167.72`：正常继续。
+- 不包含该 IP：提示实际解析地址和排查建议，仍通过域名连接。
+- DNS 查询失败或没有返回地址：报错，不回退到固定 IP。
 
-```bash
-"$HOME/.local/bin/campuslink" --base-url "https://nap.cug.edu.cn"
-```
-
-没有协议前缀的 `--base-url` 值按 HTTPS 处理。自定义网关使用所提供的地址，不会把 IP 改写为域名。客户端会校验 URL、手动指定的 IP、NAS ID 和超时范围；网关响应最多读取 1 MiB，避免异常响应占用过多内存。
-
-## 自动连接方案
-
-推荐方案是：系统启动或用户登录后立即执行一次，然后每 5 分钟重试一次。CampusLink 把“已经在线”视为成功，所以重复执行是安全的；这种方式也能覆盖 Wi-Fi 切换、睡眠恢复、网关踢线等情况。
-
-下面的示例使用上文的推荐安装路径。如果你安装到了其他位置，把服务配置里的程序路径替换成自己的实际路径。
-
-### Windows
-
-Windows 推荐使用任务计划程序。先在 PowerShell 中保存用户级环境变量：
-
-```powershell
-[Environment]::SetEnvironmentVariable("CAMPUSLINK_USERNAME", "学号", "User")
-[Environment]::SetEnvironmentVariable("CAMPUSLINK_PASSWORD", "密码", "User")
-```
-
-关闭并重新打开 PowerShell，确认能手动登录：
-
-```powershell
-& "$env:LOCALAPPDATA\CampusLink\campuslink.exe"
-```
-
-创建登录后执行一次的任务：
-
-```powershell
-$CampusLink = "$env:LOCALAPPDATA\CampusLink\campuslink.exe"
-schtasks /Create /TN "CampusLink Login" /SC ONLOGON /DELAY 0001:00 /TR "`"$CampusLink`"" /RL LIMITED /F
-```
-
-创建每 5 分钟补偿重试的任务：
-
-```powershell
-$CampusLink = "$env:LOCALAPPDATA\CampusLink\campuslink.exe"
-schtasks /Create /TN "CampusLink Login Retry" /SC MINUTE /MO 5 /TR "`"$CampusLink`"" /RL LIMITED /F
-```
-
-立即测试任务：
-
-```powershell
-schtasks /Run /TN "CampusLink Login"
-```
-
-删除任务：
-
-```powershell
-schtasks /Delete /TN "CampusLink Login" /F
-schtasks /Delete /TN "CampusLink Login Retry" /F
-```
-
-### Linux
-
-Linux 推荐使用 systemd 用户服务和 timer，不需要 root，适合大多数桌面发行版。
-
-保存账号配置：
-
-```bash
-mkdir -p ~/.config/campuslink
-cat > ~/.config/campuslink/env <<'EOF'
-CAMPUSLINK_USERNAME=学号
-CAMPUSLINK_PASSWORD=密码
-EOF
-chmod 600 ~/.config/campuslink/env
-```
-
-创建服务文件 `~/.config/systemd/user/campuslink-login.service`：
-
-```ini
-[Unit]
-Description=CampusLink login
-
-[Service]
-Type=oneshot
-EnvironmentFile=%h/.config/campuslink/env
-ExecStart=%h/.local/bin/campuslink
-```
-
-创建定时器 `~/.config/systemd/user/campuslink-login.timer`：
-
-```ini
-[Unit]
-Description=Run CampusLink login periodically
-
-[Timer]
-OnBootSec=1min
-OnUnitActiveSec=5min
-Unit=campuslink-login.service
-
-[Install]
-WantedBy=timers.target
-```
-
-启用并立即启动：
-
-```bash
-systemctl --user daemon-reload
-systemctl --user enable --now campuslink-login.timer
-systemctl --user start campuslink-login.service
-```
-
-查看状态和日志：
-
-```bash
-systemctl --user status campuslink-login.service
-journalctl --user -u campuslink-login.service -n 50
-```
-
-如果希望未登录桌面会话时也能运行用户服务，可以启用 linger：
-
-```bash
-sudo loginctl enable-linger "$USER"
-```
-
-如果你的 Linux 使用 NetworkManager，并且更希望“网络连上就立刻登录”，可以额外做 dispatcher 脚本；但这需要 root，并且不同发行版路径略有差异。systemd timer 更通用，也更容易排错。
-
-### macOS
-
-macOS 推荐使用 LaunchAgent。先创建日志目录：
-
-```bash
-mkdir -p ~/Library/Logs/CampusLink
-```
-
-创建 `~/Library/LaunchAgents/io.github.campuslink.login.plist`。下面的命令会把当前用户的 `$HOME` 写入 plist，避免手动替换 `/Users/...` 路径：
-
-```bash
-cat > ~/Library/LaunchAgents/io.github.campuslink.login.plist <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>io.github.campuslink.login</string>
-
-  <key>ProgramArguments</key>
-  <array>
-    <string>$HOME/.local/bin/campuslink</string>
-  </array>
-
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>CAMPUSLINK_USERNAME</key>
-    <string>学号</string>
-    <key>CAMPUSLINK_PASSWORD</key>
-    <string>密码</string>
-  </dict>
-
-  <key>RunAtLoad</key>
-  <true/>
-  <key>StartInterval</key>
-  <integer>300</integer>
-
-  <key>StandardOutPath</key>
-  <string>$HOME/Library/Logs/CampusLink/stdout.log</string>
-  <key>StandardErrorPath</key>
-  <string>$HOME/Library/Logs/CampusLink/stderr.log</string>
-</dict>
-</plist>
-EOF
-```
-
-设置权限、加载并立即执行：
-
-```bash
-chmod 600 ~/Library/LaunchAgents/io.github.campuslink.login.plist
-launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/io.github.campuslink.login.plist
-launchctl kickstart -k "gui/$(id -u)/io.github.campuslink.login"
-```
-
-查看日志：
-
-```bash
-tail -n 50 ~/Library/Logs/CampusLink/stdout.log
-tail -n 50 ~/Library/Logs/CampusLink/stderr.log
-```
-
-卸载：
-
-```bash
-launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/io.github.campuslink.login.plist
-```
-
-## GitHub CI
-
-- `go test ./...` 验证重定向发现、CSRF/Cookie、表单登录、在线状态、验证码和强制改密、DNS 提示和 CLI 行为。
-- `go vet ./...` 做基础静态检查。
-- `go test -race ./...` 验证并发访问安全性；模拟网关测试覆盖认证流程、DNS 检查、超时、响应上限、错误脱敏和跨主机重定向拒绝。
-- `.github/workflows/build.yml` 用于普通 push、PR 和手动触发，交叉编译 Linux x64、Windows x64、macOS arm64，并上传 Actions artifacts。
-- `.github/workflows/release.yml` 只负责发版。推送 `v*` tag 会自动创建 GitHub Release，并上传三个系统的压缩包。
-- Release workflow 也支持手动触发，输入已有 tag 后会重新构建并补发对应 Release assets。
-
-## 安全说明
-
-- 不要把账号密码提交到 Git。
-- 命令行 `-p, --password` 可能出现在 shell 历史和进程列表中；交互使用优先选择环境变量，接入密码管理器时优先选择 `--password-stdin`。
-- Windows 用户级环境变量、Linux `EnvironmentFile`、macOS plist 都会在本机保存明文密码；请确保电脑账号本身有登录密码，并限制配置文件权限。
-- macOS plist 中的账号或密码如果包含 `&`、`<`、`>` 等字符，需要进行 XML 转义，否则 plist 无法加载。
-- 网络错误只记录请求路径和底层原因，不记录包含认证参数的完整 URL；`--json` 会主动输出网关原始响应，请避免把调试输出发送到公共日志。
-- 如果需要更强的凭据保护，后续可以扩展为从 Windows Credential Manager、Linux Secret Service 或 macOS Keychain 读取密码。
+该 IP 仅用于提醒。VPN/TUN 或 Fake-IP DNS 可能影响解析结果，需要结合实际网络检查。默认校园网域名不使用环境变量 HTTP 代理；自定义网关按其地址连接。密码不会放进登录请求 URL，但显式选择 HTTP 自定义网关将不具备 HTTPS 传输保护。
 
 ## 故障排查
 
-- `cannot find valid client IP from portal redirect; pass --ip`：认证页重定向没有返回有效 IP。先确认已连接校园网，必要时重新向 DHCP 申请 IP。重新获取地址后再运行 CampusLink；如果仍失败，可以使用 `--ip` 或 `CAMPUSLINK_IP` 手动指定。
+先运行：
 
-  Windows PowerShell:
+```bash
+campuslink doctor
+campuslink logs
+```
 
-  ```powershell
-  ipconfig /release
-  ipconfig /renew
-  ```
+- 未保存配置：运行 `campuslink setup`。
+- 凭据服务不可访问：解锁系统凭据服务，确认任务运行在配置时的同一用户下；无桌面环境可显式选择文件存储。
+- DNS 或 HTTPS 错误：检查校园网连接、系统 DNS、VPN/TUN 和证书，确认浏览器能打开 `https://nap.cug.edu.cn`。
+- 自动连接暂停：在浏览器处理密码错误、验证码或强制改密，再运行 `setup`、成功的 `login` 或 `autostart enable`。
+- IP / NAS ID 自动发现失败：从浏览器认证页的重定向地址读取 `ip` / `nasId`，通过 `setup --ip ... --nas-id ...` 保存。两个值均指定时跳过重定向发现；更换网络后可能需要清空或更新。
+- 后台程序未更新：用新版本执行 `autostart enable`。
 
-  Linux NetworkManager:
+## 开发与验证
 
-  ```bash
-  nmcli networking off
-  nmcli networking on
-  ```
+```bash
+go test ./...
+go vet ./...
+go test -race ./...
+```
 
-  macOS:
+测试覆盖认证接口、DNS 提示、凭据覆盖、保存与读取、文件锁、日志轮转、只读诊断、暂停与恢复，以及三个平台的任务生成与安装卸载流程。任务生命周期测试使用模拟命令，不会安装真实后台任务或修改测试机器的凭据。
 
-  ```bash
-  sudo ifconfig en0 down
-  sudo ifconfig en0 up
-  ```
-
-- `cannot find valid NAS ID from portal redirect; pass --nas-id`：在浏览器打开认证页，从地址栏读取 `nasId` 后通过 `--nas-id` 或 `CAMPUSLINK_NAS_ID` 指定。若 IP 和 NAS ID 均手动指定，程序会跳过重定向发现。
-- `captcha required` / `password change required`：在浏览器打开认证页完成验证码或修改密码，再更新本地密码配置。
-- 无法登录时，先排查代理问题：关闭系统代理、浏览器代理、VPN、TUN 模式或透明代理，确认校园网网关流量没有被代理接管。
-- DNS 警告：检查提示中的实际解析地址。如果不包含 `192.168.167.72`，确认已连接校园网、DNS 设置正确，检查 VPN/TUN 的 DNS 接管，并确认学校是否再次调整网关地址。该提示不阻止登录，也不会改变域名连接方式。
-- `cannot resolve nap.cug.edu.cn` / `DNS returned no addresses`：域名解析失败，请检查校园网连接和 DNS 设置。
-- `portal request ... failed`：确认浏览器可访问 `https://nap.cug.edu.cn`，检查网络连接和证书错误。
-
-- `login failed`：使用 `--json` 查看网关返回的原始错误，再确认账号、密码、NAS ID 和学校网关地址。
+GitHub Actions 在 Windows、macOS 和 Linux 上运行测试，并交叉编译六种系统/架构组合。发版工作流由 `v*` tag 或手动指定 tag 触发。
 
 ## 许可证
 

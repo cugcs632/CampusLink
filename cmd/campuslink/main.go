@@ -30,8 +30,11 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
-func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	defaultConfig := portal.DefaultConfig()
+func (a *application) login(args []string) int {
+	stdin, stdout, stderr := a.stdin, a.stdout, a.stderr
+	saved, configErr := a.store.Load()
+	defaultConfig := connectionConfig(saved)
+
 	timeoutDefault, timeoutEnvErr := timeoutFromEnv(int(defaultConfig.Timeout / time.Second))
 
 	var (
@@ -49,15 +52,15 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 	flags := flag.NewFlagSet("campuslink", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	flags.StringVar(&username, "u", os.Getenv("CAMPUSLINK_USERNAME"), "campus network username")
-	flags.StringVar(&username, "username", os.Getenv("CAMPUSLINK_USERNAME"), "campus network username")
+	flags.StringVar(&username, "u", getenv("CAMPUSLINK_USERNAME", saved.Username), "campus network username")
+	flags.StringVar(&username, "username", getenv("CAMPUSLINK_USERNAME", saved.Username), "campus network username")
 	flags.StringVar(&password, "p", os.Getenv("CAMPUSLINK_PASSWORD"), "campus network password")
 	flags.StringVar(&password, "password", os.Getenv("CAMPUSLINK_PASSWORD"), "campus network password")
 	flags.BoolVar(&passwordStdin, "password-stdin", false, "read the campus network password from standard input")
-	flags.StringVar(&ip, "ip", os.Getenv("CAMPUSLINK_IP"), "client IP; auto-discovered when empty")
+	flags.StringVar(&ip, "ip", getenv("CAMPUSLINK_IP", saved.IP), "client IP; auto-discovered when empty")
 	flags.StringVar(&baseURL, "base-url", getenv("CAMPUSLINK_BASE_URL", defaultConfig.BaseURL), "portal base URL; defaults to https://nap.cug.edu.cn")
-	flags.StringVar(&nasID, "nas-id", os.Getenv("CAMPUSLINK_NAS_ID"), "new portal NAS ID; auto-discovered when empty")
-	flags.StringVar(&isp, "isp", os.Getenv("CAMPUSLINK_ISP"), "optional operator ID; empty uses the campus network")
+	flags.StringVar(&nasID, "nas-id", getenv("CAMPUSLINK_NAS_ID", saved.NASID), "new portal NAS ID; auto-discovered when empty")
+	flags.StringVar(&isp, "isp", getenv("CAMPUSLINK_ISP", saved.ISP), "optional operator ID; empty uses the campus network")
 	flags.IntVar(&timeoutSecs, "timeout", timeoutDefault, "HTTP timeout in seconds (1-3600)")
 	flags.BoolVar(&printJSON, "json", false, "print raw portal response as JSON")
 	flags.BoolVar(&printVersion, "version", false, "print version and exit")
@@ -74,6 +77,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if printVersion {
 		fmt.Fprintf(stdout, "campuslink %s\n", currentVersion())
 		return 0
+	}
+	if configErr != nil {
+		fmt.Fprintln(stderr, "error:", configErr)
+		return 2
 	}
 	if timeoutEnvErr != nil && !flagWasSet(flags, "timeout") {
 		fmt.Fprintln(stderr, "error:", timeoutEnvErr)
@@ -96,6 +103,23 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 	}
 
+	if !passwordStdin && !flagWasSet(flags, "p") && !flagWasSet(flags, "password") && os.Getenv("CAMPUSLINK_PASSWORD") == "" && saved.Version == 1 && username == saved.Username && samePortal(baseURL, saved.BaseURL) {
+		var err error
+		password, err = a.store.Password(saved)
+		if err != nil {
+			fmt.Fprintln(stderr, "error:", err)
+			return 1
+		}
+	}
+	if username == "" || password == "" {
+		if username == "" {
+			fmt.Fprintln(stderr, "error: username is required; run campuslink setup")
+		} else {
+			fmt.Fprintln(stderr, "error: password is required; run campuslink setup")
+		}
+		return 1
+	}
+
 	config := defaultConfig
 	config.BaseURL = baseURL
 	config.NASID = nasID
@@ -108,7 +132,16 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 
+	unlock, err := a.store.Lock()
+	if err != nil {
+		fmt.Fprintln(stderr, "error: another operation is running or the configuration directory is not writable:", err)
+		return 1
+	}
+	defer unlock()
 	result, err := client.Login(username, password, ip)
+	if recordErr := a.record(result, err, false); recordErr != nil {
+		fmt.Fprintln(stderr, "warning: cannot record login status:", recordErr)
+	}
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
 		return 1

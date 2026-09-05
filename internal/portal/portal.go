@@ -159,29 +159,13 @@ func (c *Client) LoginContext(ctx context.Context, username, password, ip string
 	if ip != "" && net.ParseIP(ip) == nil {
 		return nil, errors.New("invalid client IP")
 	}
-	if err := c.checkDNS(ctx); err != nil {
-		return nil, err
-	}
-	params, err := c.discover(ctx, ip)
-	if err != nil {
-		return nil, err
-	}
-	csrf, err := c.requestJSON(ctx, http.MethodGet, "/api/csrf-token", nil, "")
-	if err != nil {
-		return nil, err
-	}
-	token, _ := csrf["csrf_token"].(string)
-	if token == "" {
-		return nil, errors.New("CSRF token missing from portal response")
-	}
-	status, err := c.requestJSON(ctx, http.MethodGet, "/api/account/status", params, token)
+	params, token, status, err := c.session(ctx, ip)
 	if err != nil {
 		return nil, err
 	}
 	if OK(status) {
 		return status, nil
 	}
-	// Only a documented offline response should proceed to credential submission.
 	if code, ok := status["code"].(float64); !ok || code != 1 {
 		return status, nil
 	}
@@ -198,6 +182,38 @@ func (c *Client) LoginContext(ctx context.Context, username, password, ip string
 		return check, nil
 	}
 	return c.requestJSON(ctx, http.MethodPost, "/api/account/login", params, token)
+}
+
+// StatusContext queries the gateway without submitting credentials.
+func (c *Client) StatusContext(ctx context.Context, ip string) (map[string]any, error) {
+	_, _, status, err := c.session(ctx, ip)
+	return status, err
+}
+
+func (c *Client) session(ctx context.Context, ip string) (url.Values, string, map[string]any, error) {
+	if ctx == nil {
+		return nil, "", nil, errors.New("context is required")
+	}
+	if ip != "" && net.ParseIP(ip) == nil {
+		return nil, "", nil, errors.New("invalid client IP")
+	}
+	if err := c.checkDNS(ctx); err != nil {
+		return nil, "", nil, err
+	}
+	params, err := c.discover(ctx, ip)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	csrf, err := c.requestJSON(ctx, http.MethodGet, "/api/csrf-token", nil, "")
+	if err != nil {
+		return nil, "", nil, err
+	}
+	token, _ := csrf["csrf_token"].(string)
+	if token == "" {
+		return nil, "", nil, errors.New("CSRF token missing from portal response")
+	}
+	status, err := c.requestJSON(ctx, http.MethodGet, "/api/account/status", params, token)
+	return params, token, status, err
 }
 
 func (c *Client) discover(ctx context.Context, ip string) (url.Values, error) {
