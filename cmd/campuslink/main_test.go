@@ -11,7 +11,7 @@ import (
 
 func TestJSONFailureReturnsNonzero(t *testing.T) {
 	clearConfigEnv(t)
-	server := mockPortal(t, `{"error":"password_error","error_msg":"password_error"}`)
+	server := mockPortal(t, `{"code":1,"msg":"password_error"}`)
 	defer server.Close()
 
 	var stdout, stderr bytes.Buffer
@@ -32,12 +32,12 @@ func TestJSONFailureReturnsNonzero(t *testing.T) {
 
 func TestSuccessfulLogin(t *testing.T) {
 	clearConfigEnv(t)
-	server := mockPortal(t, `{"error":"ok","suc_msg":"login_ok"}`)
+	server := mockPortal(t, `{"code":0,"msg":"认证成功"}`)
 	defer server.Close()
 
 	var stdout, stderr bytes.Buffer
 	exitCode := run([]string{
-		"--host", server.URL,
+		"--base-url", server.URL,
 		"-u", "user",
 		"-p", "pass",
 		"--ip", "10.0.0.2",
@@ -49,21 +49,21 @@ func TestSuccessfulLogin(t *testing.T) {
 
 func TestInvalidConfigurationReturnsUsageError(t *testing.T) {
 	clearConfigEnv(t)
-	t.Setenv("SRUN_TIMEOUT", "not-a-number")
+	t.Setenv("CAMPUSLINK_TIMEOUT", "not-a-number")
 
 	var stdout, stderr bytes.Buffer
 	if exitCode := run([]string{"-u", "user", "-p", "pass"}, strings.NewReader(""), &stdout, &stderr); exitCode != 2 {
 		t.Fatalf("exit code = %d, want 2", exitCode)
 	}
-	if !strings.Contains(stderr.String(), "invalid SRUN_TIMEOUT") {
+	if !strings.Contains(stderr.String(), "invalid CAMPUSLINK_TIMEOUT") {
 		t.Fatalf("unexpected stderr: %q", stderr.String())
 	}
 }
 
 func TestTimeoutFlagOverridesInvalidEnvironment(t *testing.T) {
 	clearConfigEnv(t)
-	t.Setenv("SRUN_TIMEOUT", "not-a-number")
-	server := mockPortal(t, `{"error":"ok","suc_msg":"login_ok"}`)
+	t.Setenv("CAMPUSLINK_TIMEOUT", "not-a-number")
+	server := mockPortal(t, `{"code":0,"msg":"认证成功"}`)
 	defer server.Close()
 
 	var stdout, stderr bytes.Buffer
@@ -81,7 +81,7 @@ func TestTimeoutFlagOverridesInvalidEnvironment(t *testing.T) {
 
 func TestPasswordStdinRejectsOtherPasswordSources(t *testing.T) {
 	clearConfigEnv(t)
-	t.Setenv("SRUN_PASSWORD", "from-env")
+	t.Setenv("CAMPUSLINK_PASSWORD", "from-env")
 
 	var stdout, stderr bytes.Buffer
 	if exitCode := run([]string{"--password-stdin"}, strings.NewReader("from-stdin\n"), &stdout, &stderr); exitCode != 2 {
@@ -94,7 +94,7 @@ func TestPasswordStdinRejectsOtherPasswordSources(t *testing.T) {
 
 func TestVersionDoesNotRequireValidEnvironment(t *testing.T) {
 	clearConfigEnv(t)
-	t.Setenv("SRUN_TIMEOUT", "invalid")
+	t.Setenv("CAMPUSLINK_TIMEOUT", "invalid")
 	oldVersion := version
 	oldCommit := commit
 	version = "v1.2.3"
@@ -126,16 +126,104 @@ func TestReadPassword(t *testing.T) {
 	}
 }
 
+func TestPortalErrorsAreActionable(t *testing.T) {
+	for _, tc := range []struct{ response, message string }{
+		{`{"code":1,"msg":"账号或密码错误"}`, "账号或密码错误"},
+		{`{"code":2,"msg":"验证码"}`, "captcha required"},
+		{`{"code":0,"isChangePwd":1}`, "password change required"},
+	} {
+		t.Run(tc.message, func(t *testing.T) {
+			clearConfigEnv(t)
+			server := mockPortal(t, tc.response)
+			defer server.Close()
+			var stdout, stderr bytes.Buffer
+			exitCode := run([]string{"--base-url", server.URL, "-u", "user", "-p", "pass"}, strings.NewReader(""), &stdout, &stderr)
+			if exitCode != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), tc.message) {
+				t.Fatalf("exit=%d stdout=%q stderr=%q", exitCode, stdout.String(), stderr.String())
+			}
+		})
+	}
+}
+
+func TestRemovedFlagsAreRejected(t *testing.T) {
+	clearConfigEnv(t)
+	for _, flag := range []string{"--protocol", "--ac-id", "--gateway-ip", "--host"} {
+		var stdout, stderr bytes.Buffer
+		if code := run([]string{flag, "unused"}, strings.NewReader(""), &stdout, &stderr); code != 2 {
+			t.Fatalf("%s: exit=%d, want 2", flag, code)
+		}
+	}
+}
+
+func TestCredentialSources(t *testing.T) {
+	for _, tc := range []struct {
+		name, envUser, envPassword, stdin, wantUser, wantPassword string
+		args                                                      []string
+	}{
+		{name: "environment", envUser: "env-user", envPassword: "env-pass", wantUser: "env-user", wantPassword: "env-pass"},
+		{name: "flags override environment", envUser: "env-user", envPassword: "env-pass", args: []string{"-u", "first", "--username", "flag-user", "--password", "flag-pass"}, wantUser: "flag-user", wantPassword: "flag-pass"},
+		{name: "stdin", envUser: "env-user", args: []string{"--password-stdin"}, stdin: " stdin-pass \n", wantUser: "env-user", wantPassword: " stdin-pass "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clearConfigEnv(t)
+			t.Setenv("CAMPUSLINK_USERNAME", tc.envUser)
+			t.Setenv("CAMPUSLINK_PASSWORD", tc.envPassword)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/csrf-token":
+					fmt.Fprint(w, `{"csrf_token":"test"}`)
+				case "/api/account/status":
+					fmt.Fprint(w, `{"code":1}`)
+				case "/api/account/check", "/api/account/login":
+					if err := r.ParseForm(); err != nil {
+						t.Error(err)
+					}
+					if r.PostForm.Get("username") != tc.wantUser || r.PostForm.Get("password") != tc.wantPassword {
+						t.Error("incorrect credential source")
+					}
+					fmt.Fprint(w, `{"code":0}`)
+				default:
+					t.Errorf("unexpected request %s", r.URL.Path)
+				}
+			}))
+			defer server.Close()
+			t.Setenv("CAMPUSLINK_BASE_URL", server.URL)
+			t.Setenv("CAMPUSLINK_NAS_ID", "7")
+			t.Setenv("CAMPUSLINK_IP", "10.0.0.2")
+			var stdout, stderr bytes.Buffer
+			if code := run(tc.args, strings.NewReader(tc.stdin), &stdout, &stderr); code != 0 {
+				t.Fatalf("exit=%d stderr=%s", code, &stderr)
+			}
+		})
+	}
+}
+
+func TestOldCredentialEnvironmentIsNotRead(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("SRUN_USERNAME", "old-user")
+	t.Setenv("SRUN_PASSWORD", "old-pass")
+	var stdout, stderr bytes.Buffer
+	if code := run(nil, strings.NewReader(""), &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "username is required") {
+		t.Fatalf("exit=%d stderr=%s", code, &stderr)
+	}
+}
+
 func mockPortal(t *testing.T, portalResult string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/cgi-bin/get_challenge":
-			callback := r.URL.Query().Get("callback")
-			fmt.Fprintf(w, `%s({"challenge":"token123"});`, callback)
-		case "/cgi-bin/srun_portal":
-			callback := r.URL.Query().Get("callback")
-			fmt.Fprintf(w, "%s(%s);", callback, portalResult)
+		case "/api/r/default":
+			http.Redirect(w, r, "/login?ip=10.0.0.2&nasId=7", http.StatusFound)
+		case "/login":
+			fmt.Fprint(w, "login")
+		case "/api/csrf-token":
+			fmt.Fprint(w, `{"csrf_token":"test-token"}`)
+		case "/api/account/status":
+			fmt.Fprint(w, `{"code":1,"msg":"离线"}`)
+		case "/api/account/check":
+			fmt.Fprint(w, `{"code":0,"isChangePwd":0}`)
+		case "/api/account/login":
+			fmt.Fprint(w, portalResult)
 		default:
 			http.NotFound(w, r)
 		}
@@ -145,13 +233,13 @@ func mockPortal(t *testing.T, portalResult string) *httptest.Server {
 func clearConfigEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
-		"SRUN_USERNAME",
-		"SRUN_PASSWORD",
-		"SRUN_IP",
-		"SRUN_HOST",
-		"SRUN_BASE_URL",
-		"SRUN_AC_ID",
-		"SRUN_TIMEOUT",
+		"CAMPUSLINK_USERNAME",
+		"CAMPUSLINK_PASSWORD",
+		"CAMPUSLINK_IP",
+		"CAMPUSLINK_BASE_URL",
+		"CAMPUSLINK_TIMEOUT",
+		"CAMPUSLINK_NAS_ID",
+		"CAMPUSLINK_ISP",
 	} {
 		t.Setenv(key, "")
 	}

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cugcs632/CampusLink/internal/srun"
+	"github.com/cugcs632/CampusLink/internal/portal"
 )
 
 const (
@@ -31,7 +31,7 @@ func main() {
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	defaultConfig := srun.DefaultConfig()
+	defaultConfig := portal.DefaultConfig()
 	timeoutDefault, timeoutEnvErr := timeoutFromEnv(int(defaultConfig.Timeout / time.Second))
 
 	var (
@@ -39,24 +39,25 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		password      string
 		ip            string
 		baseURL       string
-		acID          string
 		timeoutSecs   int
 		printJSON     bool
 		passwordStdin bool
 		printVersion  bool
+		nasID         string
+		isp           string
 	)
 
 	flags := flag.NewFlagSet("campuslink", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	flags.StringVar(&username, "u", os.Getenv("SRUN_USERNAME"), "campus network username")
-	flags.StringVar(&username, "username", os.Getenv("SRUN_USERNAME"), "campus network username")
-	flags.StringVar(&password, "p", os.Getenv("SRUN_PASSWORD"), "campus network password")
-	flags.StringVar(&password, "password", os.Getenv("SRUN_PASSWORD"), "campus network password")
+	flags.StringVar(&username, "u", os.Getenv("CAMPUSLINK_USERNAME"), "campus network username")
+	flags.StringVar(&username, "username", os.Getenv("CAMPUSLINK_USERNAME"), "campus network username")
+	flags.StringVar(&password, "p", os.Getenv("CAMPUSLINK_PASSWORD"), "campus network password")
+	flags.StringVar(&password, "password", os.Getenv("CAMPUSLINK_PASSWORD"), "campus network password")
 	flags.BoolVar(&passwordStdin, "password-stdin", false, "read the campus network password from standard input")
-	flags.StringVar(&ip, "ip", os.Getenv("SRUN_IP"), "client IP; auto-discovered when empty")
-	flags.StringVar(&baseURL, "host", portalBaseURL(defaultConfig.BaseURL), "SRun portal host or base URL")
-	flags.StringVar(&baseURL, "base-url", portalBaseURL(defaultConfig.BaseURL), "SRun portal base URL; http and https are supported")
-	flags.StringVar(&acID, "ac-id", getenv("SRUN_AC_ID", defaultConfig.ACID), "SRun AC ID")
+	flags.StringVar(&ip, "ip", os.Getenv("CAMPUSLINK_IP"), "client IP; auto-discovered when empty")
+	flags.StringVar(&baseURL, "base-url", getenv("CAMPUSLINK_BASE_URL", defaultConfig.BaseURL), "portal base URL; defaults to https://nap.cug.edu.cn")
+	flags.StringVar(&nasID, "nas-id", os.Getenv("CAMPUSLINK_NAS_ID"), "new portal NAS ID; auto-discovered when empty")
+	flags.StringVar(&isp, "isp", os.Getenv("CAMPUSLINK_ISP"), "optional operator ID; empty uses the campus network")
 	flags.IntVar(&timeoutSecs, "timeout", timeoutDefault, "HTTP timeout in seconds (1-3600)")
 	flags.BoolVar(&printJSON, "json", false, "print raw portal response as JSON")
 	flags.BoolVar(&printVersion, "version", false, "print version and exit")
@@ -84,7 +85,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if passwordStdin {
 		if password != "" {
-			fmt.Fprintln(stderr, "error: --password-stdin cannot be combined with -p, --password, or SRUN_PASSWORD")
+			fmt.Fprintln(stderr, "error: --password-stdin cannot be combined with -p, --password, or CAMPUSLINK_PASSWORD")
 			return 2
 		}
 		var err error
@@ -97,10 +98,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 	config := defaultConfig
 	config.BaseURL = baseURL
-	config.ACID = acID
+	config.NASID = nasID
+	config.ISP = isp
 	config.Timeout = time.Duration(timeoutSecs) * time.Second
-
-	client, err := srun.NewClient(config)
+	config.Warn = func(message string) { fmt.Fprintln(stderr, "warning:", message) }
+	client, err := portal.NewClient(config)
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
 		return 2
@@ -112,7 +114,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	ok := srun.OK(result)
+	ok := portal.OK(result)
 	if printJSON {
 		encoded, err := json.MarshalIndent(result, "", "  ")
 		if err != nil {
@@ -131,7 +133,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	message := firstString(result, "error_msg", "message")
+	message := firstString(result, "msg", "error_msg", "message")
+	if portal.PasswordChangeRequired(result) {
+		message = "password change required; open the portal in a browser to update your password"
+	} else if result["code"] == float64(2) {
+		message = "captcha required; open the portal in a browser to complete verification"
+	}
 	if message == "" {
 		encoded, _ := json.Marshal(result)
 		message = string(encoded)
@@ -148,21 +155,14 @@ func getenv(key, fallback string) string {
 	return value
 }
 
-func portalBaseURL(fallback string) string {
-	if value := os.Getenv("SRUN_BASE_URL"); value != "" {
-		return value
-	}
-	return getenv("SRUN_HOST", fallback)
-}
-
 func timeoutFromEnv(fallback int) (int, error) {
-	value := os.Getenv("SRUN_TIMEOUT")
+	value := os.Getenv("CAMPUSLINK_TIMEOUT")
 	if value == "" {
 		return fallback, nil
 	}
 	parsed, err := strconv.Atoi(value)
 	if err != nil {
-		return fallback, fmt.Errorf("invalid SRUN_TIMEOUT %q: must be an integer number of seconds", value)
+		return fallback, fmt.Errorf("invalid CAMPUSLINK_TIMEOUT %q: must be an integer number of seconds", value)
 	}
 	return parsed, nil
 }

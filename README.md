@@ -1,6 +1,26 @@
 # CampusLink
 
-CampusLink 是一个校园网 SRun 自动登录工具。实现语言为 Go，产物是单文件二进制程序，不依赖脚本运行时、包管理器或虚拟环境。当前默认面向 `nap.cug.edu.cn`。
+CampusLink 是一个校园网自动登录工具。实现语言为 Go，产物是单文件二进制程序，不依赖脚本运行时、包管理器或虚拟环境。默认连接 `https://nap.cug.edu.cn`，通过系统 DNS 解析域名后连接。
+
+## 认证与连接
+
+程序通过账号认证 API 登录：自动获取客户端 IP 和 NAS ID，获取 CSRF token 与会话 Cookie，检查在线状态，再依次通过表单 POST 调用 `/api/account/check` 和 `/api/account/login`。已在线时直接成功返回；验证码或强制改密要求会提示前往浏览器处理。
+
+默认通过系统 DNS 解析 `nap.cug.edu.cn`，并使用 HTTPS 连接和校验证书。登录前检查解析结果：
+
+- 包含 `192.168.167.72`：正常继续。
+- 不包含该 IP：向标准错误输出实际解析结果、预期 IP 和排查建议，仍通过域名连接，不强制替换 IP。`--json` 的标准输出保持为 JSON。
+- DNS 查询失败或没有返回地址：报错退出，不回退到固定 IP。DNS 查询受 `--timeout` 限制。
+
+`192.168.167.72` 仅用于提醒，不是硬编码连接地址。默认域名不使用环境变量 HTTP 代理；VPN/TUN 等系统级代理仍可能影响 DNS 和连接。自定义 `--base-url` 不执行校园网域名的 IP 对比。
+
+## 凭据读取
+
+- 用户名：`CAMPUSLINK_USERNAME` 提供初始值，`-u` / `--username` 覆盖它。
+- 密码：`CAMPUSLINK_PASSWORD` 提供初始值，`-p` / `--password` 覆盖它。
+- 命令行参数重复时最后一个生效；空字符串也会覆盖环境变量。
+- `--password-stdin` 仅在上述解析后的密码为空时读取标准输入第一行，否则报冲突。读取时去掉行尾换行，保留其他空格。
+- 最终账号或密码为空会报错；不自动加载 `.env`、配置文件或钥匙串，也不弹出交互输入提示。
 
 ## 下载和安装
 
@@ -87,8 +107,8 @@ login ok
 也可以使用环境变量，避免把密码写进命令历史：
 
 ```bash
-export SRUN_USERNAME="学号"
-export SRUN_PASSWORD="密码"
+export CAMPUSLINK_USERNAME="学号"
+export CAMPUSLINK_PASSWORD="密码"
 "$HOME/.local/bin/campuslink"
 ```
 
@@ -96,7 +116,7 @@ export SRUN_PASSWORD="密码"
 
 ```bash
 read -rsp "Campus network password: " CAMPUSLINK_PASSWORD
-printf '%s\n' "$CAMPUSLINK_PASSWORD" | env -u SRUN_PASSWORD "$HOME/.local/bin/campuslink" -u "学号" --password-stdin
+printf '%s\n' "$CAMPUSLINK_PASSWORD" | env -u CAMPUSLINK_PASSWORD "$HOME/.local/bin/campuslink" -u "学号" --password-stdin
 unset CAMPUSLINK_PASSWORD
 ```
 
@@ -112,22 +132,22 @@ Release 和 GitHub Actions 构建会同时显示版本号与 commit，例如 `ca
 
 | 环境变量 | 命令行参数 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `SRUN_USERNAME` | `-u, --username` | 无 | 校园网账号 |
-| `SRUN_PASSWORD` | `-p, --password` | 无 | 校园网密码 |
+| `CAMPUSLINK_USERNAME` | `-u, --username` | 无 | 校园网账号 |
+| `CAMPUSLINK_PASSWORD` | `-p, --password` | 无 | 校园网密码 |
 | 无 | `--password-stdin` | 关闭 | 从标准输入读取密码，不能与其他密码来源同时使用 |
-| `SRUN_IP` | `--ip` | 自动发现 | 自动发现失败时手动指定客户端 IP |
-| `SRUN_BASE_URL` | `--base-url` | `http://nap.cug.edu.cn` | SRun 网关完整基础 URL，优先于 `SRUN_HOST`，支持 HTTP/HTTPS |
-| `SRUN_HOST` | `--host` | `http://nap.cug.edu.cn` | 兼容旧配置；可以是网关域名、IP 或完整基础 URL |
-| `SRUN_AC_ID` | `--ac-id` | `1` | SRun 接入点 ID |
-| `SRUN_TIMEOUT` | `--timeout` | `8` | HTTP 超时时间，单位秒，有效范围 1–3600；非法配置会直接报错 |
+| `CAMPUSLINK_IP` | `--ip` | 自动发现 | 自动发现失败时手动指定客户端 IP |
+| `CAMPUSLINK_BASE_URL` | `--base-url` | `https://nap.cug.edu.cn` | 网关基础 URL，支持 HTTP/HTTPS；默认通过域名连接 |
+| `CAMPUSLINK_NAS_ID` | `--nas-id` | 自动发现 | 接入设备 ID；自动发现失败时可手动指定 |
+| `CAMPUSLINK_ISP` | `--isp` | 不发送 | 可选运营商 ID；按网关要求指定 |
+| `CAMPUSLINK_TIMEOUT` | `--timeout` | `8` | HTTP 超时时间，单位秒，有效范围 1–3600；非法配置会直接报错 |
 
-如果网关提供有效的 HTTPS 服务，建议明确使用 HTTPS：
+默认使用 HTTPS；也可以明确指定：
 
 ```bash
 "$HOME/.local/bin/campuslink" --base-url "https://nap.cug.edu.cn"
 ```
 
-没有协议前缀的 `--host` 值会按 HTTP 处理，以兼容原有配置。客户端会校验 URL、手动指定的 IP 和超时范围；网关响应最多读取 1 MiB，避免异常响应占用过多内存。
+没有协议前缀的 `--base-url` 值按 HTTPS 处理。自定义网关使用所提供的地址，不会把 IP 改写为域名。客户端会校验 URL、手动指定的 IP、NAS ID 和超时范围；网关响应最多读取 1 MiB，避免异常响应占用过多内存。
 
 ## 自动连接方案
 
@@ -140,8 +160,8 @@ Release 和 GitHub Actions 构建会同时显示版本号与 commit，例如 `ca
 Windows 推荐使用任务计划程序。先在 PowerShell 中保存用户级环境变量：
 
 ```powershell
-[Environment]::SetEnvironmentVariable("SRUN_USERNAME", "学号", "User")
-[Environment]::SetEnvironmentVariable("SRUN_PASSWORD", "密码", "User")
+[Environment]::SetEnvironmentVariable("CAMPUSLINK_USERNAME", "学号", "User")
+[Environment]::SetEnvironmentVariable("CAMPUSLINK_PASSWORD", "密码", "User")
 ```
 
 关闭并重新打开 PowerShell，确认能手动登录：
@@ -154,27 +174,27 @@ Windows 推荐使用任务计划程序。先在 PowerShell 中保存用户级环
 
 ```powershell
 $CampusLink = "$env:LOCALAPPDATA\CampusLink\campuslink.exe"
-schtasks /Create /TN "CampusLink SRun Login" /SC ONLOGON /DELAY 0001:00 /TR "`"$CampusLink`"" /RL LIMITED /F
+schtasks /Create /TN "CampusLink Login" /SC ONLOGON /DELAY 0001:00 /TR "`"$CampusLink`"" /RL LIMITED /F
 ```
 
 创建每 5 分钟补偿重试的任务：
 
 ```powershell
 $CampusLink = "$env:LOCALAPPDATA\CampusLink\campuslink.exe"
-schtasks /Create /TN "CampusLink SRun Login Retry" /SC MINUTE /MO 5 /TR "`"$CampusLink`"" /RL LIMITED /F
+schtasks /Create /TN "CampusLink Login Retry" /SC MINUTE /MO 5 /TR "`"$CampusLink`"" /RL LIMITED /F
 ```
 
 立即测试任务：
 
 ```powershell
-schtasks /Run /TN "CampusLink SRun Login"
+schtasks /Run /TN "CampusLink Login"
 ```
 
 删除任务：
 
 ```powershell
-schtasks /Delete /TN "CampusLink SRun Login" /F
-schtasks /Delete /TN "CampusLink SRun Login Retry" /F
+schtasks /Delete /TN "CampusLink Login" /F
+schtasks /Delete /TN "CampusLink Login Retry" /F
 ```
 
 ### Linux
@@ -186,8 +206,8 @@ Linux 推荐使用 systemd 用户服务和 timer，不需要 root，适合大多
 ```bash
 mkdir -p ~/.config/campuslink
 cat > ~/.config/campuslink/env <<'EOF'
-SRUN_USERNAME=学号
-SRUN_PASSWORD=密码
+CAMPUSLINK_USERNAME=学号
+CAMPUSLINK_PASSWORD=密码
 EOF
 chmod 600 ~/.config/campuslink/env
 ```
@@ -196,7 +216,7 @@ chmod 600 ~/.config/campuslink/env
 
 ```ini
 [Unit]
-Description=CampusLink SRun login
+Description=CampusLink login
 
 [Service]
 Type=oneshot
@@ -208,7 +228,7 @@ ExecStart=%h/.local/bin/campuslink
 
 ```ini
 [Unit]
-Description=Run CampusLink SRun login periodically
+Description=Run CampusLink login periodically
 
 [Timer]
 OnBootSec=1min
@@ -250,17 +270,17 @@ macOS 推荐使用 LaunchAgent。先创建日志目录：
 mkdir -p ~/Library/Logs/CampusLink
 ```
 
-创建 `~/Library/LaunchAgents/io.github.campuslink.srun-login.plist`。下面的命令会把当前用户的 `$HOME` 写入 plist，避免手动替换 `/Users/...` 路径：
+创建 `~/Library/LaunchAgents/io.github.campuslink.login.plist`。下面的命令会把当前用户的 `$HOME` 写入 plist，避免手动替换 `/Users/...` 路径：
 
 ```bash
-cat > ~/Library/LaunchAgents/io.github.campuslink.srun-login.plist <<EOF
+cat > ~/Library/LaunchAgents/io.github.campuslink.login.plist <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>io.github.campuslink.srun-login</string>
+  <string>io.github.campuslink.login</string>
 
   <key>ProgramArguments</key>
   <array>
@@ -269,9 +289,9 @@ cat > ~/Library/LaunchAgents/io.github.campuslink.srun-login.plist <<EOF
 
   <key>EnvironmentVariables</key>
   <dict>
-    <key>SRUN_USERNAME</key>
+    <key>CAMPUSLINK_USERNAME</key>
     <string>学号</string>
-    <key>SRUN_PASSWORD</key>
+    <key>CAMPUSLINK_PASSWORD</key>
     <string>密码</string>
   </dict>
 
@@ -292,9 +312,9 @@ EOF
 设置权限、加载并立即执行：
 
 ```bash
-chmod 600 ~/Library/LaunchAgents/io.github.campuslink.srun-login.plist
-launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/io.github.campuslink.srun-login.plist
-launchctl kickstart -k "gui/$(id -u)/io.github.campuslink.srun-login"
+chmod 600 ~/Library/LaunchAgents/io.github.campuslink.login.plist
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/io.github.campuslink.login.plist
+launchctl kickstart -k "gui/$(id -u)/io.github.campuslink.login"
 ```
 
 查看日志：
@@ -307,14 +327,14 @@ tail -n 50 ~/Library/Logs/CampusLink/stderr.log
 卸载：
 
 ```bash
-launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/io.github.campuslink.srun-login.plist
+launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/io.github.campuslink.login.plist
 ```
 
 ## GitHub CI
 
-- `go test ./...` 验证认证算法、JSONP 解析、CLI 行为和模拟网关登录流程。
+- `go test ./...` 验证重定向发现、CSRF/Cookie、表单登录、在线状态、验证码和强制改密、DNS 提示和 CLI 行为。
 - `go vet ./...` 做基础静态检查。
-- `go test -race ./...` 验证并发访问安全性；模拟网关测试覆盖 IP 发现、challenge、登录结果、超时、响应上限和错误脱敏。
+- `go test -race ./...` 验证并发访问安全性；模拟网关测试覆盖认证流程、DNS 检查、超时、响应上限、错误脱敏和跨主机重定向拒绝。
 - `.github/workflows/build.yml` 用于普通 push、PR 和手动触发，交叉编译 Linux x64、Windows x64、macOS arm64，并上传 Actions artifacts。
 - `.github/workflows/release.yml` 只负责发版。推送 `v*` tag 会自动创建 GitHub Release，并上传三个系统的压缩包。
 - Release workflow 也支持手动触发，输入已有 tag 后会重新构建并补发对应 Release assets。
@@ -330,7 +350,7 @@ launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/io.github.campuslink.sru
 
 ## 故障排查
 
-- `cannot find client ip from portal page; pass --ip`：网关页面没有返回工具预期的 IP 字段，通常需要重新向 DHCP 申请 IP。重新获取地址后再运行 CampusLink；如果仍失败，可以使用 `--ip` 或 `SRUN_IP` 手动指定。
+- `cannot find valid client IP from portal redirect; pass --ip`：认证页重定向没有返回有效 IP。先确认已连接校园网，必要时重新向 DHCP 申请 IP。重新获取地址后再运行 CampusLink；如果仍失败，可以使用 `--ip` 或 `CAMPUSLINK_IP` 手动指定。
 
   Windows PowerShell:
 
@@ -353,22 +373,14 @@ launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/io.github.campuslink.sru
   sudo ifconfig en0 up
   ```
 
+- `cannot find valid NAS ID from portal redirect; pass --nas-id`：在浏览器打开认证页，从地址栏读取 `nasId` 后通过 `--nas-id` 或 `CAMPUSLINK_NAS_ID` 指定。若 IP 和 NAS ID 均手动指定，程序会跳过重定向发现。
+- `captcha required` / `password change required`：在浏览器打开认证页完成验证码或修改密码，再更新本地密码配置。
 - 无法登录时，先排查代理问题：关闭系统代理、浏览器代理、VPN、TUN 模式或透明代理，确认校园网网关流量没有被代理接管。
-- `portal connection failed`：通常是未连接到校园网、DNS 不通、网关域名不可达或认证地址不是默认 `nap.cug.edu.cn`。如果是 DNS 等问题导致无法访问默认网关，可以使用备用地址：
+- DNS 警告：检查提示中的实际解析地址。如果不包含 `192.168.167.72`，确认已连接校园网、DNS 设置正确，检查 VPN/TUN 的 DNS 接管，并确认学校是否再次调整网关地址。该提示不阻止登录，也不会改变域名连接方式。
+- `cannot resolve nap.cug.edu.cn` / `DNS returned no addresses`：域名解析失败，请检查校园网连接和 DNS 设置。
+- `portal request ... failed`：确认浏览器可访问 `https://nap.cug.edu.cn`，检查网络连接和证书错误。
 
-  ```bash
-  "$HOME/.local/bin/campuslink" --host 192.168.167.115
-  "$HOME/.local/bin/campuslink" --host 192.168.167.116
-  ```
-
-  Windows PowerShell:
-
-  ```powershell
-  & "$env:LOCALAPPDATA\CampusLink\campuslink.exe" --host 192.168.167.115
-  & "$env:LOCALAPPDATA\CampusLink\campuslink.exe" --host 192.168.167.116
-  ```
-
-- `login failed`：使用 `--json` 查看网关返回的原始错误，再确认账号、密码、`ac_id` 和学校网关地址。
+- `login failed`：使用 `--json` 查看网关返回的原始错误，再确认账号、密码、NAS ID 和学校网关地址。
 
 ## 许可证
 
